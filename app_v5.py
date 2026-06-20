@@ -11,6 +11,7 @@ import numpy as np
 import plotly.graph_objects as go
 from plotly.subplots import make_subplots
 from datetime import datetime, date
+import streamlit.components.v1 as components
 import warnings
 warnings.filterwarnings("ignore")
 
@@ -21,7 +22,7 @@ try:
 except ImportError:
     ANTHROPIC_AVAILABLE = False
 
-st.set_page_config(page_title="📈 IHSG Assistant v5", page_icon="📈",
+st.set_page_config(page_title="📈 IHSG Assistant v6", page_icon="📈",
                    layout="wide", initial_sidebar_state="collapsed")
 
 LQ45 = sorted(list(set([
@@ -686,11 +687,11 @@ with st.sidebar:
 ai_status = '<span class="ai-badge">🤖 Claude AI ON</span>' if st.session_state["api_key"] else '<span class="rule-badge">⚙️ Rule-based</span>'
 st.markdown(f"""<div style="text-align:center;padding:14px 0 6px">
   <h1 style="color:#e8eaf6;font-size:1.9em;margin:0">📈 IHSG Trading Assistant {ai_status}</h1>
-  <p style="color:#9e9e9e;margin:3px 0 0;font-size:.85em">v5.0 · Claude AI · Intraday 5m/15m · Fundamental · 3-Timeframe · Portfolio</p>
+  <p style="color:#9e9e9e;margin:3px 0 0;font-size:.85em">v6.0 · TradingView Live Chart · Claude AI · Intraday · Fundamental · Portfolio</p>
 </div>""",unsafe_allow_html=True)
 
-tab_analisis,tab_intraday,tab_fundamental,tab_portfolio,tab_screener = st.tabs([
-    "🔍 Analisis","⚡ Intraday","💹 Fundamental","💼 Posisi & AI Chat","📊 Screener LQ45"
+tab_analisis,tab_intraday,tab_fundamental,tab_portfolio,tab_screener,tab_tv = st.tabs([
+    "🔍 Analisis","⚡ Intraday","💹 Fundamental","💼 Posisi & AI Chat","📊 Screener LQ45","📺 Live Chart (TV)"
 ])
 
 
@@ -1283,3 +1284,221 @@ with tab_screener:
             with cb:
                 if st.button(f"→ Analisis",key=f"scr_{r['ticker']}",use_container_width=True):
                     st.session_state["screen_ticker"]=r["ticker"]+".JK"; st.rerun()
+
+
+# ════════════════════════════════════════════════════════════════════════════════
+# TAB 6 — LIVE CHART TRADINGVIEW (BARU v6)
+# ════════════════════════════════════════════════════════════════════════════════
+with tab_tv:
+    st.markdown("### 📺 Live Chart — TradingView Real-time")
+    st.caption("Chart real-time dari TradingView. Pastikan kamu sudah login TradingView di browser ini untuk menikmati data Essential plan kamu.")
+
+    if not st.session_state["result"]:
+        st.info("Pilih saham di tab Analisis dulu, lalu kembali ke sini.")
+    else:
+        R   = st.session_state["result"]
+        ticker    = R["ticker"]
+        sr        = R["sr"]
+        fib       = R["fib"]
+        trade_plan= R["trade_plan"]
+        trend     = R["trend"]
+        price     = trend["price"]
+        smart_rec = R["smart"]["smart_rec"]
+
+        # Timeframe selector
+        st.markdown("#### 🕐 Pilih Timeframe")
+        tf_options = {
+            "1 Menit  (Ultra Scalp)":   "1",
+            "5 Menit  (Scalp Entry)":   "5",
+            "15 Menit (Scalp Setup)":   "15",
+            "1 Jam    (Swing Entry)":   "60",
+            "Daily    (Swing)":         "D",
+            "Weekly   (Position)":      "W",
+        }
+        col_tf1, col_tf2, col_tf3 = st.columns([2,1,1])
+        with col_tf1:
+            selected_tf_label = st.selectbox(
+                "Timeframe:",
+                list(tf_options.keys()),
+                index=2,   # default 15 Menit
+                label_visibility="collapsed"
+            )
+        with col_tf2:
+            chart_height = st.slider("Tinggi chart:", 400, 800, 620, 50)
+        with col_tf3:
+            st.markdown(f"""<div style="padding:8px;background:rgba(66,165,245,.1);border-radius:8px;text-align:center;margin-top:2px">
+            <b style="color:#42a5f5">{ticker.replace('.JK','')}</b><br>
+            <span style="font-size:.85em;color:#9e9e9e">Rp{price:,.0f}</span>
+            </div>""", unsafe_allow_html=True)
+
+        selected_interval = tf_options[selected_tf_label]
+
+        # Tips banner
+        tf_tips = {
+            "1": "⚡ 1 Menit: Hanya untuk timing eksekusi. Gunakan 15m untuk setup, 1m untuk entry presisi.",
+            "5": "⚡ 5 Menit: Lihat VWAP + EMA9. Entry saat harga pull back ke VWAP dengan RSI 40-50.",
+            "15": "⚡ 15 Menit: Terbaik untuk setup scalp. Pastikan bias dari 1H searah, baru cari entry di 15m.",
+            "60": "📊 1 Jam: Untuk bias intraday dan swing entry. Konfirmasikan dengan Daily.",
+            "D":  "📈 Daily: Timeframe utama swing trading. S/R dan sinyal kita paling akurat di sini.",
+            "W":  "📅 Weekly: Arah arus besar. Jangan pernah lawan tren Weekly.",
+        }
+        st.info(tf_tips.get(selected_interval, ""))
+
+        # Main layout: chart + level panel
+        col_chart, col_levels = st.columns([3, 1])
+
+        with col_chart:
+            # === EMBED TRADINGVIEW CHART ===
+            symbol_tv = "IDX:" + ticker.replace(".JK", "")
+            wl_stocks = [
+                "IDX:BBCA","IDX:BBRI","IDX:BMRI","IDX:GOTO","IDX:TLKM",
+                "IDX:ASII","IDX:ANTM","IDX:ITMG","IDX:BREN","IDX:UNVR",
+                "IDX:INDF","IDX:ADRO","IDX:PTBA","IDX:ICBP","IDX:SIDO",
+            ]
+            wl_json = '","'.join(wl_stocks)
+
+            tv_html = f"""<!DOCTYPE html>
+<html><head><meta charset="utf-8">
+<style>
+  * {{ margin:0; padding:0; box-sizing:border-box; }}
+  body {{ background:#131722; }}
+  .tv-wrap {{ width:100%; height:{chart_height}px; }}
+  .tradingview-widget-container {{ height:100%; width:100%; }}
+  .tradingview-widget-container__widget {{ height:calc(100% - 32px); width:100%; }}
+</style></head><body>
+<div class="tv-wrap">
+  <div class="tradingview-widget-container">
+    <div class="tradingview-widget-container__widget"></div>
+    <script type="text/javascript"
+      src="https://s3.tradingview.com/external-embedding/embed-widget-advanced-chart.js" async>
+    {{
+      "autosize": true,
+      "symbol": "{symbol_tv}",
+      "interval": "{selected_interval}",
+      "timezone": "Asia/Jakarta",
+      "theme": "dark",
+      "style": "1",
+      "locale": "id",
+      "withdateranges": true,
+      "hide_side_toolbar": false,
+      "allow_symbol_change": true,
+      "save_image": true,
+      "enable_publishing": false,
+      "watchlist": ["{wl_json}"],
+      "details": true,
+      "studies": [
+        "STD;VWAP",
+        "STD;Volume",
+        "STD;RSI"
+      ],
+      "show_popup_button": true,
+      "popup_width": "1200",
+      "popup_height": "700",
+      "support_host": "https://www.tradingview.com"
+    }}
+    </script>
+  </div>
+</div>
+</body></html>"""
+
+            components.html(tv_html, height=chart_height + 32, scrolling=False)
+
+        with col_levels:
+            st.markdown("**📌 Level Referensi**")
+            st.caption("Gambar level ini di TradingView menggunakan tool Horizontal Line (Alt+H)")
+
+            # Signal summary
+            rec_color = "#4caf50" if smart_rec["rec"] in ["BELI","BELI KUAT"] else "#f44336" if smart_rec["rec"] in ["JUAL","JUAL KUAT"] else "#ff9800"
+            st.markdown(f"""<div style="background:{rec_color}22;border:1px solid {rec_color}44;border-radius:8px;padding:8px 10px;margin-bottom:10px;text-align:center">
+            <b style="color:{rec_color}">{smart_rec['emoji']} {smart_rec['rec']}</b><br>
+            <span style="font-size:.8em;color:#9e9e9e">Skor {smart_rec['score']:.0f}/100</span>
+            </div>""", unsafe_allow_html=True)
+
+            # Resistance levels
+            if sr.get("resistance"):
+                st.markdown("**🔴 Resistance:**")
+                for r, d in zip(sr["resistance"][:3], sr["res_dist"][:3]):
+                    urgent = "🔥" if d < 2 else "⚠️" if d < 4 else ""
+                    st.markdown(f"""<div style="background:rgba(244,67,54,.1);border-left:3px solid #f44336;border-radius:4px;padding:5px 8px;margin:3px 0;font-size:.85em">
+                    <b style="color:#ef9a9a">Rp{r:,.0f}</b> <span style="color:#9e9e9e">+{d:.1f}% {urgent}</span>
+                    </div>""", unsafe_allow_html=True)
+
+            # Support levels
+            if sr.get("support"):
+                st.markdown("**🟢 Support:**")
+                for s, d in zip(sr["support"][:3], sr["sup_dist"][:3]):
+                    entry_zone = "✅" if d < 3 else ""
+                    st.markdown(f"""<div style="background:rgba(76,175,80,.1);border-left:3px solid #4caf50;border-radius:4px;padding:5px 8px;margin:3px 0;font-size:.85em">
+                    <b style="color:#a5d6a7">Rp{s:,.0f}</b> <span style="color:#9e9e9e">-{d:.1f}% {entry_zone}</span>
+                    </div>""", unsafe_allow_html=True)
+
+            # Fibonacci
+            st.markdown("**📐 Fibonacci:**")
+            fib_colors = {"38.2%": "#ffb300", "50%": "#ffee58", "61.8%": "#aed581"}
+            for pct, level in fib.items():
+                if pct in fib_colors:
+                    near = " ←" if abs(level - price) / price < 0.025 else ""
+                    st.markdown(f"""<div style="background:rgba(255,238,88,.06);border-left:3px solid {fib_colors[pct]};border-radius:4px;padding:5px 8px;margin:3px 0;font-size:.82em">
+                    <span style="color:{fib_colors[pct]}">{pct}</span> <b style="color:#e0e0e0">Rp{level:,.0f}</b>{near}
+                    </div>""", unsafe_allow_html=True)
+
+            # Trade Plan summary
+            if trade_plan and trade_plan.get("type") == "BUY":
+                tp = trade_plan
+                st.markdown("**📋 Trade Plan:**")
+                st.markdown(f"""<div style="background:rgba(66,165,245,.08);border:1px solid rgba(66,165,245,.25);border-radius:8px;padding:8px 10px;font-size:.82em">
+                🔵 Entry: Rp{tp['entry_mid']:,.0f}<br>
+                🔴 SL: Rp{tp['sl']:,.0f} (-{tp['sl_pct']:.1f}%)<br>
+                🟢 TP1: Rp{tp['tp1']:,.0f} (+{tp['tp1_pct']:.1f}%)<br>
+                🟢 TP2: Rp{tp['tp2']:,.0f} (+{tp['tp2_pct']:.1f}%)<br>
+                ⚖️ R:R → 1:{tp['rr1']:.1f} {'✅' if tp['rr1']>=1.5 else '⚠️'}
+                </div>""", unsafe_allow_html=True)
+
+        st.divider()
+
+        # Cara pakai section
+        with st.expander("📖 Cara Pakai Tab Ini — Panduan Scalping dengan TradingView + Tools"):
+            st.markdown(f"""
+### Workflow Scalping 5m-15m
+
+**Langkah 1 — Setup Pagi (8:30-9:00 WIB)**
+1. Buka tab **📊 Screener LQ45** → scan semua saham → temukan kandidat terbaik hari ini
+2. Klik kandidat → masuk tab **🔍 Analisis** → lihat sinyal Daily + Trade Plan
+3. Catat level kunci: Support, Resistance, Fibonacci, Entry, SL, TP
+
+**Langkah 2 — Gambar Level di TradingView**
+Di panel kanan (**Level Referensi**), kamu bisa lihat semua level yang perlu digambar:
+- Buka TradingView (bisa di tab ini, bisa di TV langsung)
+- Tekan **Alt+H** → muncul garis horizontal → geser ke level yang tertera
+- Warnai: merah untuk resistance, hijau untuk support, kuning untuk Fibonacci
+
+**Langkah 3 — Set Alert di TradingView**
+- Klik kanan pada garis horizontal yang kamu gambar
+- Pilih **"Add alert on [nama garis]"**
+- Pilih kondisi: **"Price crossing"**
+- Aktifkan notifikasi HP → saat harga menyentuh level, HP berdering
+
+**Langkah 4 — Trading (Saat Market Buka)**
+- Pilih timeframe **15m** → lihat setup / bias intraday
+- Pilih timeframe **5m** → timing entry presisi
+- **Entry trigger:** Harga menyentuh support + VWAP di bawah + RSI 40-50 + candle bullish
+- **Jangan entry** jika harga jauh dari support atau RSI sudah > 65
+
+**Langkah 5 — Monitor Posisi**
+- Input posisi di tab **💼 Posisi & AI Chat**
+- Tanya Claude AI: *"Apakah saya harus hold atau take profit sekarang?"*
+
+---
+
+### Setup Indikator TradingView yang Optimal untuk IDX Scalping
+Pergi ke TradingView → klik **Indicators** (atas chart) → tambahkan:
+1. **VWAP** — acuan paling penting untuk bias intraday
+2. **EMA 9** (Exponential Moving Average, periode 9) — trend jangka sangat pendek  
+3. **EMA 21** — support/resistance dinamis
+4. **Volume** (sudah ada default)
+5. **RSI 14** — overbought/oversold
+
+Setting layout yang direkomendasikan: **2 chart berdampingan**
+- Kiri: **15 menit** (untuk melihat setup)
+- Kanan: **5 menit** (untuk timing entry)
+            """)
